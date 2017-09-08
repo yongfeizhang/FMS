@@ -9,13 +9,18 @@ set(CMAKE_Fortran_MODULE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 project(libfms C Fortran)
 
+# Find custom CMake Modules
+set(CMAKE_MODULE_PATH ${libfms_SOURCE_DIR}/CMakeModules ${CMAKE_MODULE_PATH})
+
+# Include CMake modules with useful functions
 include(${CMAKE_ROOT}/Modules/CheckFortranCompilerFlag.cmake)
 include(${CMAKE_ROOT}/Modules/CheckCCompilerFlag.cmake)
+include(${libfms_SOURCE_DIR}/CMakeModules/GetFMSCompileFlags.cmake)
 
-# Default values for variables
-set(CMAKE_MODULE_PATH ${libfms_SOURCE_DIR}/CMakeModules ${CMAKE_MODULE_PATH})
+# Set the default build variables
+# These can be changed via `cmake -D<var>`, e.g. cmake -DOPENMP=FALSE to disable openMP.
 set(OPENMP TRUE CACHE BOOL "To determine if OpenMP build should be performed")
-set(BUILD_TARGET "PROD" CACHE STRING "Build Target Type.  Can be \"PROD|REPRO|DEBUG\".  Use -DCMAKE_BUILD_TYPE=DEBUG for debug builds")
+set(BUILD_TARGET "PROD" CACHE STRING "Build Target Type.  Can be \"PROD|REPRO|DEBUG\".  Build Target of DEBUG will set CMAKE_BUILD_TYPE to DEBUG.")
 
 # Force CMAKE_BUILD_TYPE to DEBUG if BUILD_TARGET STREQUAL DEBUG
 if (BUILD_TARGET STREQUAL DEBUG)
@@ -24,100 +29,23 @@ else (BUILD_TARGET STREQUAL DEBUG)
   set(CMAKE_BUILD_TYPE "RELEASE" CACHE STRING "" FORCE)
 endif (BUILD_TARGET STREQUAL DEBUG)
 
-# Fortran compiler flags
-if (CMAKE_Fortran_COMPILER_ID STREQUAL Intel)
-  set(CMAKE_Fortran_FLAGS
-    "-fno-alias -stack_temps -safe_cray_ptr -ftz -assume byterecl -i4 -r8 -nowarn -g -sox -traceback")
-  set(CMAKE_Fortran_FLAGS_PROD
-    "-O2")
-  set(CMAKE_Fortran_FLAGS_REPRO
-    "-O2 -fltconsistency")
-  set(CMAKE_Fortran_FLAGS_DEBUG
-    "-O0 -check -check noarg_temp_created -check nopointer -warn -warn noerrors -debug variable_locations -fpe0 -ftrapuv")
-  set(CMAKE_Fortran_FLAGS_VERBOSE
-    "-v -V -what -warn all")
-  # Determine the OpenMP flag for the compiler
-  # Newer versions of Intel use -qopenmp
-  CHECK_Fortran_COMPILER_FLAG(-qopenmp _has_qopenmp)
-  if (_has_qopenmp)
-    set(CMAKE_Fortran_FLAGS_OPENMP
-      "-qopenmp")
-  else(_has_qopenmp)
-    set(CMAKE_Fortran_FLAGS_OPENMP
-      "-openmp")
-  endif (_has_qopenmp)
-  # CPP/FPP Macros
-  set(CMAKE_Fortran_CPPFLAGS
-    "-DINTERNAL_FILE_NML")
-elseif (CMAKE_Fortran_COMPILER_ID STREQUAL GNU)
-  set(CMAKE_Fortran_FLAGS
-    "-fcray-pointer -fdefault-double-8 -fdefault-real-8 -Waliasing -ffree-line-length-none -fno-range-check")
-  set(CMAKE_Fortran_FLAGS_PROD
-    "-O3")
-  set(CMAKE_Fortran_FLAGS_REPRO
-    "-O2 -fbounds-check")
-  set(CMAKE_Fortran_FLAGS_DEBUG
-    "-O0 -g -W -fbounds-check -fbacktrace -ffpe-trap=invalid,zero,overflow")
-  set(CMAKE_Fortran_FLAGS_VERBOSE
-    "-Wall -Wextra")
-  set(CMAKE_Fortran_FLAGS_OPENMP
-    "-fopenmp")
-  # CPP/FPP Macros
-  set(CMAKE_Fortran_CPPFLAGS
-    "-DINTERNAL_FILE_NML")
-endif (CMAKE_Fortran_COMPILER_ID STREQUAL Intel)
-
-# C compiler flags
-if (CMAKE_C_COMPILER_ID STREQUAL Intel)
-  set(CMAKE_C_FLAGS
-    "-D__IFC -sox -traceback")
-  set(CMAKE_C_FLAGS_PROD
-    "-O2")
-  set(CMAKE_C_FLAGS_REPRO
-    "")
-  set(CMAKE_C_FLAGS_DEBUG
-    "-O0 -g -ftrapuv")
-  set(CMAKE_C_FLAGS_VERBOSE
-    "-w3")
-  # Determine the OpenMP flag for the compiler
-  # Newer versions of Intel use -qopenmp
-  CHECK_C_COMPILER_FLAG(-qopenmp _has_qopenmp)
-  if (_has_qopenmp)
-    set(CMAKE_C_FLAGS_OPENMP
-      "-qopenmp")
-  else(_has_qopenmp)
-    set(CMAKE_C_FLAGS_OPENMP
-      "-openmp")
-  endif (_has_qopenmp)
-elseif (CMAKE_C_COMPILER_ID STREQUAL GNU)
-  set(CMAKE_C_FLAGS
-    "-D__IFC")
-  set(CMAKE_C_FLAGS_PROD
-    "-O2")
-  set(CMAKE_C_FLAGS_REPRO
-    "")
-  set(CMAKE_C_FLAGS_DEBUG
-    "-O0 -g")
-  set(CMAKE_C_FLAGS_VERBOSE
-    "-Wall -Wextra")
-  set(CMAKE_C_FLAGS_OPENMP
-    "-fopenmp")
-endif (CMAKE_C_COMPILER_ID STREQUAL Intel)
-
-# OpenMP is on by default.
-if (OPENMP)
-  set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${CMAKE_Fortran_FLAGS_OPENMP}")
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_OPENMP}")
-endif (OPENMP)
-
-if (CMAKE_BUILD_TYPE STREQUAL RELEASE)
-  set(CMAKE_Fortran_FLAGS_RELEASE ${CMAKE_Fortran_FLAGS_${BUILD_TARGET}} CACHE STRING "" FORCE)
-  set(CMAKE_C_FLAGS_RELEASE ${CMAKE_C_FLAGS_${BUILD_TARGET}} CACHE STRING "" FORCE)
-endif (CMAKE_BUILD_TYPE STREQUAL RELEASE)
-
 # Required external packages/libraries
-find_package(NetCDF)
+find_package(NetCDF REQUIRED C Fortran)
 find_package(MPI)
+
+get_fms_compile_flags()
+
+message("************************************************************")
+message("Building FMS with")
+message("Fortran Compiler: ${CMAKE_Fortran_COMPILER_ID} ${CMAKE_Fortran_COMPILER_VERSION}")
+message("Fortran Flags: ${CMAKE_Fortran_FLAGS} ${CMAKE_Fortran_FLAGS_${CMAKE_BUILD_TYPE}}")
+message("C Compiler: ${CMAKE_Fortran_COMPILER_ID} ${CMAKE_Fortran_COMPILER_VERSION}")
+message("C Flags: ${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${CMAKE_BUILD_TYPE}}")
+message("Build Target: ${BUILD_TARGET}")
+message("OpenMP Enabled: ${OPENMP}")
+message("Using NetCDF C: ${NETCDF_C_VERSION}")
+message("Using NetCDF Fortran: ${NETCDF_Fortran_VERSION}")
+message("************************************************************")
 
 # Include directory required by all
 include_directories(

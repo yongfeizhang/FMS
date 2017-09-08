@@ -109,9 +109,18 @@ foreach (lang C Fortran)
 	RETURN_VALUE NETCDF_COMPILE_FLAGS_RETURN
 	)
     endif (NOT NETCDF_${lang}_COMPILE_FLAGS)
+    if (NOT NETCDF_${lang}_COMPILE_FLAGS)
+      exec_program(${NCDF_CONFIG_${lang}}
+	ARGS --version
+	OUTPUT_VARIABLE _version_string
+	RETURN_VALUE NETCDF_VERSION_RETURN
+	)
+      string(REGEX MATCH "[0-9]+(.[0-9]+)*" NETCDF_VERSION ${_version_string})
+    endif (NOT NETCDF_${lang}_COMPILE_FLAGS)
     unset(_libs_arg)
     unset(_comp_arg)
     unset(_flag_arg)
+    unset(_version_string)
     
     # Check the return value.  If either is zero, then C netCDF library
     # not found
@@ -177,10 +186,15 @@ foreach (lang C Fortran)
       set(NETCDF_${lang}_COMPILE_FLAGS ${NETCDF_COMPILE_FLAGS} CACHE STRING "NetCDF ${lang} compilation flags" FORCE)
       set(NETCDF_${lang}_INCLUDE_PATH ${NETCDF_INCLUDE_PATH} CACHE STRING "NetCDF ${lang} include path" FORCE)
       set(NETCDF_${lang}_LIBRARIES ${NETCDF_LIBRARIES} CACHE STRING "NetCDF ${lang} linking flags and libraries" FORCE)
+      if (NETCDF_VERSION_RETURN EQUAL 0)
+	set(NETCDF_${lang}_VERSION ${NETCDF_VERSION} CACHE STRING "NetCDF ${lang} version" FORCE)
+	mark_as_advanced(NETCDF_${lang}_VERSION)
+      endif (NETCDF_VERSION_RETURN EQUAL 0)
       mark_as_advanced(NETCDF_${lang}_COMPILER
 	NETCDF_${lang}_COMPILE_FLAGS
 	NETCDF_${lang}_INCLUDE_PATH
-	NETCDF_${lang}_LIBRARIES)
+	NETCDF_${lang}_LIBRARIES
+	NETCDF_${lang}_VERSION)
       set(NetCDF_FIND_REQUIRED_${lang} ${NETCDF_${lang}_FOUND})
     endif (NETCDF_${lang}_FOUND)
   endif (NOT NCDF_CONFIG_${lang})
@@ -190,10 +204,12 @@ foreach (lang C Fortran)
   unset(NETCDF_LIBRARIES_RETURN)
   unset(NETCDF_COMPILER_RETURN)
   unset(NETCDF_COMPILE_FLAGS_RETURN)
+  unset(NETCDF_VERSION_RETURN)
   unset(NETCDF_COMPILER)
   unset(NETCDF_COMPILE_FLAGS)
   unset(NETCDF_INCLUDE_PATH)
   unset(NETCDF_LIBRARIES)
+  unset(NETCDF_VERSION)
 endforeach (lang C Fortran)
 
 unset(NCDF_CONFIG_C)
