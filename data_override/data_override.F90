@@ -108,10 +108,13 @@ type data_type
    character(len=128) :: fieldname_code !fieldname used in user's code (model)
    character(len=128) :: fieldname_file ! fieldname used in the netcdf data file
    character(len=512) :: file_name   ! name of netCDF data file
+   character(len=512) :: prev_file_name   ! name of netCDF data file for previous segment
+   character(len=512) :: next_file_name   ! name of netCDF data file for next segment
    character(len=128) :: interpol_method   ! interpolation method (default "bilinear")
    real               :: factor ! For unit conversion, default=1, see OVERVIEW above
    real               :: lon_start, lon_end, lat_start, lat_end
    integer            :: region_type
+   logical            :: multifile = .false.
 end type data_type
 
 
@@ -208,6 +211,7 @@ subroutine data_override_init(Atm_domain_in, Ocean_domain_in, Ice_domain_in, Lan
   character(len=128)    :: grid_file = 'INPUT/grid_spec.nc'
   integer               :: is,ie,js,je,count
   integer               :: i, iunit, ntable, ntable_lima, ntable_new, unit,io_status, ierr
+  integer               :: index_1col, index_2col!, indextest
   character(len=256)    :: record
   logical               :: file_open
   logical               :: ongrid
@@ -266,6 +270,9 @@ subroutine data_override_init(Atm_domain_in, Ocean_domain_in, Ice_domain_in, Lan
     default_table%file_name = 'none'
     default_table%factor = 1.
     default_table%interpol_method = 'bilinear'
+    default_table%multifile = .false.
+    default_table%prev_file_name = 'none'
+    default_table%next_file_name = 'none'
     do i = 1,max_table
        data_table(i) = default_table
     enddo
@@ -295,6 +302,19 @@ subroutine data_override_init(Atm_domain_in, Ocean_domain_in, Ice_domain_in, Lan
              ntable_new=ntable_new+1
              read(record,*,err=99) data_entry%gridname, data_entry%fieldname_code, data_entry%fieldname_file, &
                                    data_entry%file_name, data_entry%interpol_method, data_entry%factor, region, region_type
+             if (index(data_entry%file_name, ":") .ne. 0) then
+               data_entry%multifile = .true.
+               index_1col = index(data_entry%file_name, ":")
+               index_2col = index(data_entry%file_name(index_1col+1:), ":")
+               data_entry%prev_file_name = data_entry%file_name(1:index_1col-1)
+               data_entry%next_file_name = data_entry%file_name(index_1col+index_2col+1:)
+               ! once previous/next files are filled in, overwrite current
+               data_entry%file_name = data_entry%file_name(index_1col+1:index_1col+index_2col-1)
+             else
+               data_entry%multifile = .false.
+               data_entry%prev_file_name = ""
+               data_entry%next_file_name = ""
+             endif
              if (data_entry%interpol_method == 'default') then
                 data_entry%interpol_method = default_table%interpol_method
              endif
@@ -336,6 +356,20 @@ subroutine data_override_init(Atm_domain_in, Ocean_domain_in, Ice_domain_in, Lan
           ntable_lima = ntable_lima + 1
           read(record,*,err=99) data_entry%gridname, data_entry%fieldname_code, data_entry%fieldname_file, &
                                    data_entry%file_name, ongrid, data_entry%factor
+          if (index(data_entry%file_name, ":") .ne. 0) then
+            data_entry%multifile = .true.
+            index_1col = index(data_entry%file_name, ":")
+            index_2col = index(data_entry%file_name(index_1col+1:), ":")
+            if (index_2col .eq. 0) call mpp_error(FATAL, "data_override: must provide either 1 or 3 forcing files")
+            data_entry%prev_file_name = data_entry%file_name(1:index_1col-1)
+            data_entry%next_file_name = data_entry%file_name(index_1col+index_2col+1:)
+            ! once previous/next files are filled in, overwrite current
+            data_entry%file_name = data_entry%file_name(index_1col+1:index_1col+index_2col-1)
+          else
+            data_entry%multifile = .false.
+            data_entry%prev_file_name = ""
+            data_entry%next_file_name = ""
+          endif
           if(ongrid) then
              data_entry%interpol_method = 'none'
           else
@@ -350,6 +384,20 @@ subroutine data_override_init(Atm_domain_in, Ocean_domain_in, Ice_domain_in, Lan
           ntable_new=ntable_new+1
           read(record,*,err=99) data_entry%gridname, data_entry%fieldname_code, data_entry%fieldname_file, &
                                 data_entry%file_name, data_entry%interpol_method, data_entry%factor
+          if (index(data_entry%file_name, ":") .ne. 0) then
+            index_1col = index(data_entry%file_name, ":")
+            index_2col = index(data_entry%file_name(index_1col+1:), ":")
+            data_entry%multifile = .true.
+            if (index_2col .eq. 0) call mpp_error(FATAL, "data_override: must provide either 1 or 3 forcing files")
+            data_entry%prev_file_name = data_entry%file_name(1:index_1col-1)
+            data_entry%next_file_name = data_entry%file_name(index_1col+index_2col+1:)
+            ! once previous/next files are filled in, overwrite current
+            data_entry%file_name = data_entry%file_name(index_1col+1:index_1col+index_2col-1)
+          else
+            data_entry%multifile = .false.
+            data_entry%prev_file_name = ""
+            data_entry%next_file_name = ""
+          endif
           if (data_entry%interpol_method == 'default') then
             data_entry%interpol_method = default_table%interpol_method
           endif
@@ -678,11 +726,15 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
   logical, dimension(:,:,:),   allocatable :: mask_out
 
   character(len=512) :: filename, filename2 !file containing source data
+  character(len=512) :: prevfilename, prevfilename2 !file containing source data
+  character(len=512) :: nextfilename, nextfilename2 !file containing source data
   character(len=128) :: fieldname ! fieldname used in the data file
   integer            :: i,j
   integer            :: dims(4)
   integer            :: index1 ! field index in data_table
   integer            :: id_time !index for time interp in override array
+  integer            :: id_time_prev !index for time interp in override array
+  integer            :: id_time_next !index for time interp in override array
   integer            :: axis_sizes(4)
   real, dimension(:,:), pointer :: lon_local =>NULL(), &
                                    lat_local =>NULL() !of output (target) grid cells
@@ -704,6 +756,7 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
   real    :: lat_min, lat_max
   integer :: is_src, ie_src, js_src, je_src
   logical :: exists
+  logical :: multifile
 
   use_comp_domain = .false.
   if(.not.module_is_initialized) &
@@ -730,6 +783,7 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
 
   fieldname = data_table(index1)%fieldname_file ! fieldname in netCDF data file
   factor = data_table(index1)%factor
+  multifile = data_table(index1)%multifile
 
   if(fieldname == "") then
      data = factor
@@ -738,6 +792,8 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
   else
      filename = data_table(index1)%file_name
      if (filename == "") call mpp_error(FATAL,'data_override: filename not given in data_table')
+     if (multifile) prevfilename = data_table(index1)%prev_file_name
+     if (multifile) nextfilename = data_table(index1)%next_file_name
   endif
 
   ongrid = (data_table(index1)%interpol_method == 'none')
@@ -811,6 +867,18 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
            call get_mosaic_tile_file(filename,filename2,.false.,domain)
            filename = filename2
         endif
+        if (multifile) then
+          inquire(file=trim(prevfilename),EXIST=exists)
+          if (.not. exists) then
+             call get_mosaic_tile_file(prevfilename,prevfilename2,.false.,domain)
+             prevfilename = prevfilename2
+          endif
+          inquire(file=trim(nextfilename),EXIST=exists)
+          if (.not. exists) then
+             call get_mosaic_tile_file(nextfilename,nextfilename2,.false.,domain)
+             nextfilename = nextfilename2
+          endif
+        endif
 
         !--- we always only pass data on compute domain
         id_time = init_external_field(filename,fieldname,domain=domain,verbose=.false., &
@@ -823,6 +891,17 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
         id_time = init_external_field(filename,fieldname,domain=domain, axis_centers=axis_centers,&
              axis_sizes=axis_sizes, verbose=.false.,override=.true.,use_comp_domain=use_comp_domain, &
              nwindows = nwindows)
+
+        if (multifile) then
+          id_time_prev = init_external_field(prevfilename,fieldname,domain=domain, axis_centers=axis_centers,&
+               axis_sizes=axis_sizes, verbose=.false.,override=.true.,use_comp_domain=use_comp_domain, &
+               nwindows = nwindows)
+  
+          id_time_next = init_external_field(nextfilename,fieldname,domain=domain, axis_centers=axis_centers,&
+               axis_sizes=axis_sizes, verbose=.false.,override=.true.,use_comp_domain=use_comp_domain, &
+               nwindows = nwindows)
+        endif
+
         dims = get_external_field_size(id_time)
         override_array(curr_position)%dims = dims
         if(id_time<0) call mpp_error(FATAL,'data_override:field not found in init_external_field 2')
