@@ -422,6 +422,8 @@ subroutine data_override_init(Atm_domain_in, Ocean_domain_in, Ice_domain_in, Lan
           data_entry%region_type = NO_REGION
        endif
        data_table(ntable) = data_entry
+       print *, 'prev_file/next_file=',data_entry%prev_file_name,'/',data_entry%next_file_name
+
     enddo
     call mpp_error(FATAL,'too many enries in data_table')
 99  call mpp_error(FATAL,'error in data_table format')
@@ -881,24 +883,35 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
         endif
 
         !--- we always only pass data on compute domain
-        id_time = init_external_field(filename,fieldname,domain=domain,verbose=.false., &
-                                      use_comp_domain=use_comp_domain, nwindows=nwindows)
+        id_time = init_external_field(filename,fieldname,domain=domain,verbose=.true., &
+               use_comp_domain=use_comp_domain, nwindows=nwindows)
+
+        if (multifile) then
+          id_time_prev = init_external_field(prevfilename,fieldname,domain=domain, axis_centers=axis_centers,&
+               axis_sizes=axis_sizes, verbose=.true.,override=.true.,use_comp_domain=use_comp_domain, &
+               nwindows = nwindows)
+
+          id_time_next = init_external_field(nextfilename,fieldname,domain=domain, axis_centers=axis_centers,&
+               axis_sizes=axis_sizes, verbose=.true.,override=.true.,use_comp_domain=use_comp_domain, &
+               nwindows = nwindows)
+        endif
+
         dims = get_external_field_size(id_time)
         override_array(curr_position)%dims = dims
         if(id_time<0) call mpp_error(FATAL,'data_override:field not found in init_external_field 1')
         override_array(curr_position)%t_index = id_time
      else !ongrid=false
         id_time = init_external_field(filename,fieldname,domain=domain, axis_centers=axis_centers,&
-             axis_sizes=axis_sizes, verbose=.false.,override=.true.,use_comp_domain=use_comp_domain, &
+             axis_sizes=axis_sizes, verbose=.true.,override=.true.,use_comp_domain=use_comp_domain, &
              nwindows = nwindows)
 
         if (multifile) then
           id_time_prev = init_external_field(prevfilename,fieldname,domain=domain, axis_centers=axis_centers,&
-               axis_sizes=axis_sizes, verbose=.false.,override=.true.,use_comp_domain=use_comp_domain, &
+               axis_sizes=axis_sizes, verbose=.true.,override=.true.,use_comp_domain=use_comp_domain, &
                nwindows = nwindows)
-  
+
           id_time_next = init_external_field(nextfilename,fieldname,domain=domain, axis_centers=axis_centers,&
-               axis_sizes=axis_sizes, verbose=.false.,override=.true.,use_comp_domain=use_comp_domain, &
+               axis_sizes=axis_sizes, verbose=.true.,override=.true.,use_comp_domain=use_comp_domain, &
                nwindows = nwindows)
         endif
 
