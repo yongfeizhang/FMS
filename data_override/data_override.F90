@@ -85,7 +85,7 @@ use horiz_interp_mod, only : horiz_interp_init, horiz_interp_new, horiz_interp_t
 use time_interp_external_mod, only:time_interp_external_init, time_interp_external, &
                                    init_external_field, get_external_field_size, &
                                    NO_REGION, INSIDE_REGION, OUTSIDE_REGION,     &
-                                   set_override_region, reset_src_data_region
+                                   set_override_region, reset_src_data_region, get_time_axis
 use fms_io_mod, only: field_size, read_data, fms_io_init,get_mosaic_tile_grid, get_mosaic_tile_file
 use fms_mod, only: write_version_number, field_exist, lowercase, file_exist, open_namelist_file, check_nml_error, close_file
 use axis_utils_mod, only: get_axis_bounds, nearest_index
@@ -115,6 +115,9 @@ type data_type
    real               :: lon_start, lon_end, lat_start, lat_end
    integer            :: region_type
    logical            :: multifile = .false.
+   type(time_type), dimension(:), pointer :: time_records => NULL()
+   type(time_type), dimension(:), pointer :: time_prev_records => NULL()
+   type(time_type), dimension(:), pointer :: time_next_records => NULL()
 end type data_type
 
 
@@ -913,6 +916,13 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
           id_time_next = init_external_field(nextfilename,fieldname,domain=domain, axis_centers=axis_centers,&
                axis_sizes=axis_sizes, verbose=.true.,override=.true.,use_comp_domain=use_comp_domain, &
                nwindows = nwindows)
+          dims = get_external_field_size(id_time)
+          allocate(data_table(index1)%time_records(dims(4)))
+          allocate(data_table(index1)%time_prev_records(dims(4)))
+          allocate(data_table(index1)%time_next_records(dims(4)))
+          call get_time_axis(id_time,data_table(index1)%time_records)
+          call get_time_axis(id_time_prev,data_table(index1)%time_prev_records)
+          call get_time_axis(id_time_next,data_table(index1)%time_next_records)
         endif
 
         dims = get_external_field_size(id_time)
