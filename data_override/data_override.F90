@@ -86,6 +86,7 @@ use time_interp_external_mod, only:time_interp_external_init, time_interp_extern
                                    init_external_field, get_external_field_size, &
                                    NO_REGION, INSIDE_REGION, OUTSIDE_REGION,     &
                                    set_override_region, reset_src_data_region, get_time_axis
+use time_interp_external_bridge_mod, only: time_interp_external_bridge
 use fms_io_mod, only: field_size, read_data, fms_io_init,get_mosaic_tile_grid, get_mosaic_tile_file
 use fms_mod, only: write_version_number, field_exist, lowercase, file_exist, open_namelist_file, check_nml_error, close_file
 use axis_utils_mod, only: get_axis_bounds, nearest_index
@@ -95,7 +96,7 @@ use mpp_domains_mod, only : mpp_get_data_domain, mpp_set_compute_domain, mpp_set
 use mpp_domains_mod, only : mpp_set_global_domain, mpp_deallocate_domain
 use mpp_domains_mod, only : domainUG, mpp_pass_SG_to_UG, mpp_get_UG_SG_domain, NULL_DOMAINUG
 
-use time_manager_mod, only: time_type
+use time_manager_mod , only: time_type, OPERATOR(>), OPERATOR(<)
 
 implicit none
 private
@@ -730,12 +731,13 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
   integer,           optional,  intent(in) :: is_in, ie_in, js_in, je_in
   logical, dimension(:,:,:),   allocatable :: mask_out
 
+  type(time_type)    :: first_record, last_record
   character(len=512) :: filename, filename2 !file containing source data
   character(len=512) :: prevfilename, prevfilename2 !file containing source data
   character(len=512) :: nextfilename, nextfilename2 !file containing source data
   character(len=128) :: fieldname ! fieldname used in the data file
   integer            :: i,j
-  integer            :: dims(4)
+  integer            :: dims(4), prev_dims(4), next_dims(4)
   integer            :: index1 ! field index in data_table
   integer            :: id_time !index for time interp in override array
   integer            :: id_time_prev !index for time interp in override array
@@ -895,13 +897,18 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
             id_time_prev = init_external_field(prevfilename,fieldname,domain=domain, axis_centers=axis_centers,&
                axis_sizes=axis_sizes, verbose=.true.,override=.true.,use_comp_domain=use_comp_domain, &
                nwindows = nwindows)
+            prev_dims = get_external_field_size(id_time_prev)
+            allocate(data_table(index1)%time_prev_records(prev_dims(4)))
+            call get_time_axis(id_time_prev,data_table(index1)%time_prev_records)
           endif
-        endif
           id_time_next = -1
           if (nextfilename /= 'none') then
             id_time_next = init_external_field(nextfilename,fieldname,domain=domain, axis_centers=axis_centers,&
                axis_sizes=axis_sizes, verbose=.true.,override=.true.,use_comp_domain=use_comp_domain, &
                nwindows = nwindows)
+            next_dims = get_external_field_size(id_time_next)
+            allocate(data_table(index1)%time_next_records(next_dims(4)))
+            call get_time_axis(id_time_next,data_table(index1)%time_next_records)
           endif
         endif
 
@@ -915,20 +922,24 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
              nwindows = nwindows)
 
         if (multifile) then
-          id_time_prev = init_external_field(prevfilename,fieldname,domain=domain, axis_centers=axis_centers,&
+          id_time_prev = -1
+          if (prevfilename /= 'none') then
+            id_time_prev = init_external_field(prevfilename,fieldname,domain=domain, axis_centers=axis_centers,&
                axis_sizes=axis_sizes, verbose=.true.,override=.true.,use_comp_domain=use_comp_domain, &
                nwindows = nwindows)
-
-          id_time_next = init_external_field(nextfilename,fieldname,domain=domain, axis_centers=axis_centers,&
+            prev_dims = get_external_field_size(id_time_prev)
+            allocate(data_table(index1)%time_prev_records(prev_dims(4)))
+            call get_time_axis(id_time_prev,data_table(index1)%time_prev_records)
+          endif
+          id_time_next = -1
+          if (nextfilename /= 'none') then
+            id_time_next = init_external_field(nextfilename,fieldname,domain=domain, axis_centers=axis_centers,&
                axis_sizes=axis_sizes, verbose=.true.,override=.true.,use_comp_domain=use_comp_domain, &
                nwindows = nwindows)
-          dims = get_external_field_size(id_time)
-          allocate(data_table(index1)%time_records(dims(4)))
-          allocate(data_table(index1)%time_prev_records(dims(4)))
-          allocate(data_table(index1)%time_next_records(dims(4)))
-          call get_time_axis(id_time,data_table(index1)%time_records)
-          call get_time_axis(id_time_prev,data_table(index1)%time_prev_records)
-          call get_time_axis(id_time_next,data_table(index1)%time_next_records)
+            next_dims = get_external_field_size(id_time_next)
+            allocate(data_table(index1)%time_next_records(next_dims(4)))
+            call get_time_axis(id_time_next,data_table(index1)%time_next_records)
+          endif
         endif
 
         dims = get_external_field_size(id_time)
@@ -1116,38 +1127,74 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
       call mpp_error(FATAL, "data_override: dims(3) .NE. 1 and size(data,3) .NE. dims(3)")
 
 
+  first_record = data_table(index1)%time_records(1)
+  last_record = data_table(index1)%time_records(dims(4))
 
   if(ongrid) then
 !10 do time interp to get data in compute_domain
      if(data_file_is_2D) then
-        if (multifile .and. (time<file_current%time_records(1))) then
+
+        if (multifile .and. (time<first_record)) then
            if (id_time_prev<0) call mpp_error(FATAL,'data_override:previous file needed')
-           call bridge(id_time_prev,id_time, time, data)
-        else if (multifile .and. (time>file_current%time_records(last_record))) then
+           if (time<data_table(index1)%time_prev_records(1)) call mpp_error(FATAL, 'data_override:time anterior to all files')
+           call time_interp_external_bridge(id_time_prev, id_time,time,data(:,:,1),verbose=.false., &
+                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+        else if (multifile .and. (time>last_record)) then
            if (id_time_next<0) call mpp_error(FATAL,'data_override:previous file needed')
-           call bridge(id_time,id_time_next, time, data)
+           if (time>data_table(index1)%time_next_records(next_dims(4))) call mpp_error(FATAL, 'data_override:time posterior to all files')
+           call time_interp_external_bridge(id_time, id_time_next,time,data(:,:,1),verbose=.false., &
+                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
         else
            call time_interp_external(id_time,time,data(:,:,1),verbose=.false., &
                 is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
         endif
-
 
         data(:,:,1) = data(:,:,1)*factor
         do i = 2, size(data,3)
            data(:,:,i) = data(:,:,1)
         enddo
      else
-        call time_interp_external(id_time,id_time_prev, id_time_next, time,data,verbose=.false., &
-                                  is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+
+        if (multifile .and. (time<first_record)) then
+           if (id_time_prev<0) call mpp_error(FATAL,'data_override:previous file needed')
+           if (time<data_table(index1)%time_prev_records(1)) call mpp_error(FATAL, 'data_override:time anterior to all files')
+           call time_interp_external_bridge(id_time_prev, id_time,time,data,verbose=.false., &
+                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+        else if (multifile .and. (time>last_record)) then
+           if (id_time_next<0) call mpp_error(FATAL,'data_override:previous file needed')
+           if (time>data_table(index1)%time_next_records(next_dims(4))) call mpp_error(FATAL, 'data_override:time posterior to all files')
+           call time_interp_external_bridge(id_time, id_time_next,time,data,verbose=.false., &
+                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+        else
+           call time_interp_external(id_time,time,data,verbose=.false., &
+                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+        endif
+
         data = data*factor
      endif
   else  ! off grid case
 ! do time interp to get global data
      if(data_file_is_2D) then
         if( data_table(index1)%region_type == NO_REGION ) then
-           call time_interp_external(id_time,time,data(:,:,1),verbose=.false., &
-                   horz_interp=override_array(curr_position)%horz_interp(window_id), &
-                   is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+
+          if (multifile .and. (time<first_record)) then
+             if (id_time_prev<0) call mpp_error(FATAL,'data_override:previous file needed')
+             if (time<data_table(index1)%time_prev_records(1)) call mpp_error(FATAL, 'data_override:time anterior to all files')
+             call time_interp_external_bridge(id_time_prev, id_time,time,data(:,:,1),verbose=.false., &
+                  horz_interp=override_array(curr_position)%horz_interp(window_id), &
+                  is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+          else if (multifile .and. (time>last_record)) then
+             if (id_time_next<0) call mpp_error(FATAL,'data_override:previous file needed')
+             if (time>data_table(index1)%time_next_records(next_dims(4))) call mpp_error(FATAL, 'data_override:time posterior to all files')
+             call time_interp_external_bridge(id_time, id_time_next,time,data(:,:,1),verbose=.false., &
+                  horz_interp=override_array(curr_position)%horz_interp(window_id), &
+                  is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+          else
+             call time_interp_external(id_time,time,data(:,:,1),verbose=.false., &
+                  horz_interp=override_array(curr_position)%horz_interp(window_id), &
+                  is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+          endif
+
            data(:,:,1) = data(:,:,1)*factor
            do i = 2, size(data,3)
              data(:,:,i) = data(:,:,1)
@@ -1155,10 +1202,28 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
         else
            allocate(mask_out(size(data,1), size(data,2),1))
            mask_out = .false.
-           call time_interp_external(id_time,time,data(:,:,1),verbose=.false., &
-                   horz_interp=override_array(curr_position)%horz_interp(window_id),      &
+
+           if (multifile .and. (time<first_record)) then
+              if (id_time_prev<0) call mpp_error(FATAL,'data_override:previous file needed')
+              if (time<data_table(index1)%time_prev_records(1)) call mpp_error(FATAL, 'data_override:time anterior to all files')
+              call time_interp_external_bridge(id_time_prev, id_time,time,data(:,:,1),verbose=.false., &
+                   horz_interp=override_array(curr_position)%horz_interp(window_id), &
                    mask_out   =mask_out(:,:,1), &
                    is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+           else if (multifile .and. (time>last_record)) then
+              if (id_time_next<0) call mpp_error(FATAL,'data_override:previous file needed')
+              if (time>data_table(index1)%time_next_records(next_dims(4))) call mpp_error(FATAL, 'data_override:time posterior to all files')
+              call time_interp_external_bridge(id_time, id_time_next,time,data(:,:,1),verbose=.false., &
+                   horz_interp=override_array(curr_position)%horz_interp(window_id), &
+                   mask_out   =mask_out(:,:,1), &
+                   is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+           else
+              call time_interp_external(id_time,time,data(:,:,1),verbose=.false., &
+                   horz_interp=override_array(curr_position)%horz_interp(window_id), &
+                   mask_out   =mask_out(:,:,1), &
+                   is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+           endif
+
            where(mask_out(:,:,1))
               data(:,:,1) = data(:,:,1)*factor
            end where
@@ -1171,17 +1236,50 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
         endif
      else
         if( data_table(index1)%region_type == NO_REGION ) then
-           call time_interp_external(id_time,time,data,verbose=.false.,      &
-                horz_interp=override_array(curr_position)%horz_interp(window_id), &
-                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+
+          if (multifile .and. (time<first_record)) then
+             if (id_time_prev<0) call mpp_error(FATAL,'data_override:previous file needed')
+             if (time<data_table(index1)%time_prev_records(1)) call mpp_error(FATAL, 'data_override:time anterior to all files')
+             call time_interp_external_bridge(id_time_prev, id_time,time,data,verbose=.false., &
+                  horz_interp=override_array(curr_position)%horz_interp(window_id), &
+                  is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+          else if (multifile .and. (time>last_record)) then
+             if (id_time_next<0) call mpp_error(FATAL,'data_override:previous file needed')
+             if (time>data_table(index1)%time_next_records(next_dims(4))) call mpp_error(FATAL, 'data_override:time posterior to all files')
+             call time_interp_external_bridge(id_time, id_time_next,time,data,verbose=.false., &
+                  horz_interp=override_array(curr_position)%horz_interp(window_id), &
+                  is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+          else
+             call time_interp_external(id_time,time,data,verbose=.false., &
+                  horz_interp=override_array(curr_position)%horz_interp(window_id), &
+                  is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+          endif
+
            data = data*factor
         else
            allocate(mask_out(size(data,1), size(data,2), size(data,3)) )
            mask_out = .false.
-           call time_interp_external(id_time,time,data,verbose=.false.,      &
-                horz_interp=override_array(curr_position)%horz_interp(window_id),    &
-                mask_out   =mask_out, &
-                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+
+          if (multifile .and. (time<first_record)) then
+             if (id_time_prev<0) call mpp_error(FATAL,'data_override:previous file needed')
+             if (time<data_table(index1)%time_prev_records(1)) call mpp_error(FATAL, 'data_override:time anterior to all files')
+             call time_interp_external_bridge(id_time_prev, id_time,time,data,verbose=.false., &
+                  horz_interp=override_array(curr_position)%horz_interp(window_id), &
+                  mask_out   =mask_out, &
+                  is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+          else if (multifile .and. (time>last_record)) then
+             if (id_time_next<0) call mpp_error(FATAL,'data_override:previous file needed')
+             if (time>data_table(index1)%time_next_records(next_dims(4))) call mpp_error(FATAL, 'data_override:time posterior to all files')
+             call time_interp_external_bridge(id_time, id_time_next,time,data,verbose=.false., &
+                  horz_interp=override_array(curr_position)%horz_interp(window_id), &
+                  mask_out   =mask_out, &
+                  is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+          else
+             call time_interp_external(id_time,time,data,verbose=.false., &
+                  horz_interp=override_array(curr_position)%horz_interp(window_id), &
+                  mask_out   =mask_out, &
+                  is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+          endif
 
            where(mask_out)
               data = data*factor
