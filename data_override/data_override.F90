@@ -85,7 +85,7 @@ use horiz_interp_mod, only : horiz_interp_init, horiz_interp_new, horiz_interp_t
 use time_interp_external_mod, only:time_interp_external_init, time_interp_external, &
                                    init_external_field, get_external_field_size, &
                                    NO_REGION, INSIDE_REGION, OUTSIDE_REGION,     &
-                                   set_override_region, reset_src_data_region
+                                   set_override_region, reset_src_data_region, get_time_axis
 use fms_io_mod, only: field_size, read_data, fms_io_init,get_mosaic_tile_grid, get_mosaic_tile_file
 use fms_mod, only: write_version_number, field_exist, lowercase, file_exist, open_namelist_file, check_nml_error, close_file
 use axis_utils_mod, only: get_axis_bounds, nearest_index
@@ -115,6 +115,9 @@ type data_type
    real               :: lon_start, lon_end, lat_start, lat_end
    integer            :: region_type
    logical            :: multifile = .false.
+   type(time_type), dimension(:), pointer :: time_records => NULL()
+   type(time_type), dimension(:), pointer :: time_prev_records => NULL()
+   type(time_type), dimension(:), pointer :: time_next_records => NULL()
 end type data_type
 
 
@@ -422,6 +425,8 @@ subroutine data_override_init(Atm_domain_in, Ocean_domain_in, Ice_domain_in, Lan
           data_entry%region_type = NO_REGION
        endif
        data_table(ntable) = data_entry
+       print *, 'prev_file/next_file=',data_entry%prev_file_name,'/',data_entry%next_file_name
+
     enddo
     call mpp_error(FATAL,'too many enries in data_table')
 99  call mpp_error(FATAL,'error in data_table format')
@@ -881,25 +886,49 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
         endif
 
         !--- we always only pass data on compute domain
-        id_time = init_external_field(filename,fieldname,domain=domain,verbose=.false., &
-                                      use_comp_domain=use_comp_domain, nwindows=nwindows)
+        id_time = init_external_field(filename,fieldname,domain=domain,verbose=.true., &
+               use_comp_domain=use_comp_domain, nwindows=nwindows)
+
+        if (multifile) then
+          id_time_prev = -1
+          if (prevfilename /= 'none') then
+            id_time_prev = init_external_field(prevfilename,fieldname,domain=domain, axis_centers=axis_centers,&
+               axis_sizes=axis_sizes, verbose=.true.,override=.true.,use_comp_domain=use_comp_domain, &
+               nwindows = nwindows)
+          endif
+        endif
+          id_time_next = -1
+          if (nextfilename /= 'none') then
+            id_time_next = init_external_field(nextfilename,fieldname,domain=domain, axis_centers=axis_centers,&
+               axis_sizes=axis_sizes, verbose=.true.,override=.true.,use_comp_domain=use_comp_domain, &
+               nwindows = nwindows)
+          endif
+        endif
+
         dims = get_external_field_size(id_time)
         override_array(curr_position)%dims = dims
         if(id_time<0) call mpp_error(FATAL,'data_override:field not found in init_external_field 1')
         override_array(curr_position)%t_index = id_time
      else !ongrid=false
         id_time = init_external_field(filename,fieldname,domain=domain, axis_centers=axis_centers,&
-             axis_sizes=axis_sizes, verbose=.false.,override=.true.,use_comp_domain=use_comp_domain, &
+             axis_sizes=axis_sizes, verbose=.true.,override=.true.,use_comp_domain=use_comp_domain, &
              nwindows = nwindows)
 
         if (multifile) then
           id_time_prev = init_external_field(prevfilename,fieldname,domain=domain, axis_centers=axis_centers,&
-               axis_sizes=axis_sizes, verbose=.false.,override=.true.,use_comp_domain=use_comp_domain, &
+               axis_sizes=axis_sizes, verbose=.true.,override=.true.,use_comp_domain=use_comp_domain, &
                nwindows = nwindows)
-  
+
           id_time_next = init_external_field(nextfilename,fieldname,domain=domain, axis_centers=axis_centers,&
-               axis_sizes=axis_sizes, verbose=.false.,override=.true.,use_comp_domain=use_comp_domain, &
+               axis_sizes=axis_sizes, verbose=.true.,override=.true.,use_comp_domain=use_comp_domain, &
                nwindows = nwindows)
+          dims = get_external_field_size(id_time)
+          allocate(data_table(index1)%time_records(dims(4)))
+          allocate(data_table(index1)%time_prev_records(dims(4)))
+          allocate(data_table(index1)%time_next_records(dims(4)))
+          call get_time_axis(id_time,data_table(index1)%time_records)
+          call get_time_axis(id_time_prev,data_table(index1)%time_prev_records)
+          call get_time_axis(id_time_next,data_table(index1)%time_next_records)
         endif
 
         dims = get_external_field_size(id_time)
@@ -1086,17 +1115,29 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
   if(dims(3) .NE. 1 .and. (size(data,3) .NE. dims(3))) &
       call mpp_error(FATAL, "data_override: dims(3) .NE. 1 and size(data,3) .NE. dims(3)")
 
+
+
   if(ongrid) then
 !10 do time interp to get data in compute_domain
      if(data_file_is_2D) then
-        call time_interp_external(id_time,time,data(:,:,1),verbose=.false., &
-                                  is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+        if (multifile .and. (time<file_current%time_records(1))) then
+           if (id_time_prev<0) call mpp_error(FATAL,'data_override:previous file needed')
+           call bridge(id_time_prev,id_time, time, data)
+        else if (multifile .and. (time>file_current%time_records(last_record))) then
+           if (id_time_next<0) call mpp_error(FATAL,'data_override:previous file needed')
+           call bridge(id_time,id_time_next, time, data)
+        else
+           call time_interp_external(id_time,time,data(:,:,1),verbose=.false., &
+                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+        endif
+
+
         data(:,:,1) = data(:,:,1)*factor
         do i = 2, size(data,3)
            data(:,:,i) = data(:,:,1)
         enddo
      else
-        call time_interp_external(id_time,time,data,verbose=.false., &
+        call time_interp_external(id_time,id_time_prev, id_time_next, time,data,verbose=.false., &
                                   is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
         data = data*factor
      endif
