@@ -132,7 +132,7 @@ module time_interp_external_bridge_mod
   end type filetype
 
   interface time_interp_external_bridge
-     module procedure time_interp_external_bridge_0d
+     !module procedure time_interp_external_bridge_0d
      module procedure time_interp_external_bridge_2d
      module procedure time_interp_external_bridge_3d
   end interface
@@ -720,8 +720,12 @@ module time_interp_external_bridge_mod
       integer,                    intent(in), optional :: is_in, ie_in, js_in, je_in
       integer,                    intent(in), optional :: window_id
 
+      type(time_type) :: time1, time2
+      integer :: dims1(4), dims2(4)
+      integer :: first_rec, last_rec
       integer :: nx, ny, nz, interp_method, t1, t2
       integer :: i1, i2, isc, iec, jsc, jec, mod_time
+      integer :: isc1, iec1, jsc1, jec1, isc2, iec2, jsc2, jec2
       integer :: yy, mm, dd, hh, min, ss
       character(len=256) :: err_msg, filename
 
@@ -745,19 +749,35 @@ module time_interp_external_bridge_mod
       if (PRESENT(verbose)) verb=verbose
       if (debug_this_module) verb = .true.
 
+      if (index1 < 1.or.index1 > num_fields) &
+           call mpp_error(FATAL,'invalid index in call to time_interp_external_bridge -- field was not initialized or failed to initialize')
       if (index2 < 1.or.index2 > num_fields) &
-           call mpp_error(FATAL,'invalid index in call to time_interp_ext -- field was not initialized or failed to initialize')
+           call mpp_error(FATAL,'invalid index in call to time_interp_external_bridge -- field was not initialized or failed to initialize')
 
-      isc=field(index2)%isc;iec=field(index2)%iec
-      jsc=field(index2)%jsc;jec=field(index2)%jec
+      isc1=field(index1)%isc;iec1=field(index1)%iec
+      jsc1=field(index1)%jsc;jec1=field(index1)%jec
 
-      if( field(index2)%numwindows == 1 ) then
+      isc2=field(index2)%isc;iec2=field(index2)%iec
+      jsc2=field(index2)%jsc;jec2=field(index2)%jec
+
+      if ((isc1 /= isc2) .or. (iec1 /= iec2) .or. (jsc1 /= jsc2) .or. (jec1 /= jec2)) then
+         call mpp_error(FATAL, 'time_interp_external_bridge: dimensions must be the same in both index1 and index2 ')
+      endif
+
+      isc=isc1 ; iec=iec1 ; jsc=jsc1 ; jec=jec1
+
+      if (trim(field(index2)%name) /= trim(field(index1)%name)) then
+         call mpp_error(FATAL, 'time_interp_external_bridge: cannot bridge between different fields.' // &
+         'field1='//trim(field(index1)%name)//' field2='//trim(field(index2)%name))
+      endif
+
+      if ((field(index1)%numwindows == 1) .and. (field(index2)%numwindows == 1)) then
          nxw = iec-isc+1
          nyw = jec-jsc+1
       else
          if( .not. present(is_in) .or. .not. present(ie_in) .or. .not. present(js_in) .or. .not. present(je_in) ) then
-            call mpp_error(FATAL, 'time_interp_external: is_in, ie_in, js_in and je_in must be present ' // &
-                                  'when numwindows > 1, field='//trim(field(index2)%name))
+            call mpp_error(FATAL, 'time_interp_external_bridge: is_in, ie_in, js_in and je_in must be present ' // &
+                                  'when numwindows > 1, field='//trim(field(index1)%name))
          endif
          nxw = ie_in - is_in + 1
          nyw = je_in - js_in + 1
@@ -770,100 +790,85 @@ module time_interp_external_bridge_mod
       isw = (nx-nxw)/2+1; iew = isw+nxw-1
       jsw = (ny-nyw)/2+1; jew = jsw+nyw-1
 
-      if (nx < nxw .or. ny < nyw .or. nz < field(index2)%siz(3)) then
+      if (nx < nxw .or. ny < nyw .or. nz < field(index1)%siz(3)) then
          write(message1,'(i6,2i5)') nx,ny,nz
-         call mpp_error(FATAL,'field '//trim(field(index2)%name)//' Array size mismatch in time_interp_external.'// &
+         call mpp_error(FATAL,'field '//trim(field(index1)%name)//' Array size mismatch in time_interp_external_bridge.'// &
          ' Array "data" is too small. shape(data)='//message1)
       endif
+      if (nx < nxw .or. ny < nyw .or. nz < field(index2)%siz(3)) then
+         write(message1,'(i6,2i5)') nx,ny,nz
+         call mpp_error(FATAL,'field '//trim(field(index2)%name)//' Array size mismatch in time_interp_external_bridge.'// &
+         ' Array "data" is too small. shape(data)='//message1)
+      endif
+
       if(PRESENT(mask_out)) then
         if (size(mask_out,1) /= nx .or. size(mask_out,2) /= ny .or. size(mask_out,3) /= nz) then
           write(message1,'(i6,2i5)') nx,ny,nz
           write(message2,'(i6,2i5)') size(mask_out,1),size(mask_out,2),size(mask_out,3)
-          call mpp_error(FATAL,'field '//trim(field(index2)%name)//' array size mismatch in time_interp_external.'// &
+          call mpp_error(FATAL,'field '//trim(field(index1)%name)//' array size mismatch in time_interp_external_bridge.'// &
           ' Shape of array "mask_out" does not match that of array "data".'// &
           ' shape(data)='//message1//' shape(mask_out)='//message2)
         endif
       endif
 
-      if (field(index2)%siz(4) == 1) then
-         ! only one record in the file => time-independent field
-         call load_record(field(index2),1,horz_interp, is_in, ie_in ,js_in, je_in,window_id)
-         i1 = find_buf_index(1,field(index2)%ibuf)
-         if( field(index2)%region_type == NO_REGION ) then
-            where(field(index2)%mask(isc:iec,jsc:jec,:,i1))
-               data(isw:iew,jsw:jew,:) = field(index2)%data(isc:iec,jsc:jec,:,i1)
-            elsewhere
-!               data(isw:iew,jsw:jew,:) = time_interp_missing !field(index)%missing? Balaji
-               data(isw:iew,jsw:jew,:) = field(index2)%missing
-            end where
-         else
-            where(field(index2)%mask(isc:iec,jsc:jec,:,i1))
-               data(isw:iew,jsw:jew,:) = field(index2)%data(isc:iec,jsc:jec,:,i1)
-            end where
-         endif
-         if(PRESENT(mask_out)) &
-              mask_out(isw:iew,jsw:jew,:) = field(index2)%mask(isc:iec,jsc:jec,:,i1)
-      else
-        if(field(index2)%have_modulo_times) then
-          call time_interp(time,field(index2)%modulo_time_beg, field(index2)%modulo_time_end, field(index2)%time(:), &
-                          w2, t1, t2, field(index2)%correct_leap_year_inconsistency, err_msg=err_msg)
-          if(err_msg .NE. '') then
-             filename = mpp_get_file_name(field(index2)%unit)
-             call mpp_error(FATAL,"time_interp_external 1: "//trim(err_msg)//&
-                    ",file="//trim(filename)//",field="//trim(field(index2)%name) )
-          endif
-        else
-          if(field(index2)%modulo_time) then
-            mod_time=1
-          else
-            mod_time=0
-          endif
-          call time_interp(time,field(index2)%time(:),w2,t1,t2,modtime=mod_time, err_msg=err_msg)
-          if(err_msg .NE. '') then
-             filename = mpp_get_file_name(field(index2)%unit)
-             call mpp_error(FATAL,"time_interp_external 2: "//trim(err_msg)//&
-                    ",file="//trim(filename)//",field="//trim(field(index2)%name) )
-          endif
-        endif
-         w1 = 1.0-w2
-         if (verb) then
-            call get_date(time,yy,mm,dd,hh,min,ss)
-            write(outunit,'(a,i4,a,i2,a,i2,1x,i2,a,i2,a,i2)') &
-                 'target time yyyy/mm/dd hh:mm:ss= ',yy,'/',mm,'/',dd,hh,':',min,':',ss
-            write(outunit,*) 't1, t2, w1, w2= ', t1, t2, w1, w2
-         endif
-
-         call load_record(field(index2),t1,horz_interp, is_in, ie_in ,js_in, je_in, window_id)
-         call load_record(field(index2),t2,horz_interp, is_in, ie_in ,js_in, je_in, window_id)
-         i1 = find_buf_index(t1,field(index2)%ibuf)
-         i2 = find_buf_index(t2,field(index2)%ibuf)
-         if(i1<0.or.i2<0) &
-              call mpp_error(FATAL,'time_interp_external : records were not loaded correctly in memory')
-
-         if (verb) then
-            write(outunit,*) 'ibuf= ',field(index2)%ibuf
-            write(outunit,*) 'i1,i2= ',i1, i2
-         endif
-
-         if( field(index2)%region_type == NO_REGION ) then
-            where(field(index2)%mask(isc:iec,jsc:jec,:,i1).and.field(index2)%mask(isc:iec,jsc:jec,:,i2))
-               data(isw:iew,jsw:jew,:) = field(index2)%data(isc:iec,jsc:jec,:,i1)*w1 + &
-                    field(index2)%data(isc:iec,jsc:jec,:,i2)*w2
-            elsewhere
-!               data(isw:iew,jsw:jew,:) = time_interp_missing !field(index)%missing? Balaji
-               data(isw:iew,jsw:jew,:) = field(index2)%missing
-            end where
-         else
-            where(field(index2)%mask(isc:iec,jsc:jec,:,i1).and.field(index2)%mask(isc:iec,jsc:jec,:,i2))
-               data(isw:iew,jsw:jew,:) = field(index2)%data(isc:iec,jsc:jec,:,i1)*w1 + &
-                    field(index2)%data(isc:iec,jsc:jec,:,i2)*w2
-            end where
-         endif
-         if(PRESENT(mask_out)) &
-              mask_out(isw:iew,jsw:jew,:) = &
-                                        field(index2)%mask(isc:iec,jsc:jec,:,i1).and.&
-                                        field(index2)%mask(isc:iec,jsc:jec,:,i2)
+      if ((field(index1)%have_modulo_times) .or. (field(index2)%have_modulo_times)) then
+          call mpp_error(FATAL, 'time_interp_external_bridge: field '//trim(field(index1)%name)//' array cannot have modulo time')
       endif
+      if ((field(index1)%modulo_time) .or. (field(index2)%modulo_time)) then
+          call mpp_error(FATAL, 'time_interp_external_bridge: field '//trim(field(index1)%name)//' array cannot have modulo time')
+      endif
+
+
+      ! no need call to time_interp to get weights?
+
+      dims1 = get_external_field_size(index1)
+      dims2 = get_external_field_size(index2)
+
+      t1 = dims1(4)
+      t2 = 1
+
+      time1 = field(index1)%time(t1)
+      time2 = field(index2)%time(t2)
+      w1 = (time - time1) / (time2 - time1)
+      w2 = 1.0-w1
+
+      if (verb) then
+         call get_date(time,yy,mm,dd,hh,min,ss)
+         write(outunit,'(a,i4,a,i2,a,i2,1x,i2,a,i2,a,i2)') &
+              'target time yyyy/mm/dd hh:mm:ss= ',yy,'/',mm,'/',dd,hh,':',min,':',ss
+         write(outunit,*) 't1, t2, w1, w2= ', t1, t2, w1, w2
+      endif
+
+      call load_record(field(index1),t1,horz_interp, is_in, ie_in ,js_in, je_in, window_id)
+      call load_record(field(index2),t2,horz_interp, is_in, ie_in ,js_in, je_in, window_id)
+      i1 = find_buf_index(t1,field(index1)%ibuf)
+      i2 = find_buf_index(t2,field(index2)%ibuf)
+      if(i1<0.or.i2<0) &
+           call mpp_error(FATAL,'time_interp_external_bridge : records were not loaded correctly in memory')
+
+      if (verb) then
+         write(outunit,*) 'ibuf= ',field(index2)%ibuf
+         write(outunit,*) 'i1,i2= ',i1, i2
+      endif
+
+      if( (field(index1)%region_type == NO_REGION) .and. (field(index2)%region_type == NO_REGION) ) then
+         where(field(index1)%mask(isc:iec,jsc:jec,:,i1).and.field(index2)%mask(isc:iec,jsc:jec,:,i2))
+            data(isw:iew,jsw:jew,:) = field(index1)%data(isc:iec,jsc:jec,:,i1)*w1 + &
+                 field(index2)%data(isc:iec,jsc:jec,:,i2)*w2
+         elsewhere
+            data(isw:iew,jsw:jew,:) = field(index1)%missing
+         end where
+      else
+         where(field(index1)%mask(isc:iec,jsc:jec,:,i1).and.field(index2)%mask(isc:iec,jsc:jec,:,i2))
+            data(isw:iew,jsw:jew,:) = field(index1)%data(isc:iec,jsc:jec,:,i1)*w1 + &
+                 field(index2)%data(isc:iec,jsc:jec,:,i2)*w2
+         end where
+      endif
+
+      if(PRESENT(mask_out)) &
+           mask_out(isw:iew,jsw:jew,:) = &
+                                     field(index1)%mask(isc:iec,jsc:jec,:,i1).and.&
+                                     field(index2)%mask(isc:iec,jsc:jec,:,i2)
 
     end subroutine time_interp_external_bridge_3d
 !</SUBROUTINE> NAME="time_interp_external"
