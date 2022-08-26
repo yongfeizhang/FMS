@@ -1127,6 +1127,10 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
       call mpp_error(FATAL, "data_override: dims(3) .NE. 1 and size(data,3) .NE. dims(3)")
 
 
+  dims = get_external_field_size(id_time)
+  if (.not. associated(data_table(index1)%time_records)) allocate(data_table(index1)%time_records(dims(4)))
+  call get_time_axis(id_time,data_table(index1)%time_records)
+
   first_record = data_table(index1)%time_records(1)
   last_record = data_table(index1)%time_records(dims(4))
 
