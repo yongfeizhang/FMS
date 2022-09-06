@@ -749,9 +749,11 @@ module time_interp_external_bridge_mod
       if (PRESENT(verbose)) verb=verbose
       if (debug_this_module) verb = .true.
 
-      if (index1 < 1.or.index1 > num_fields) &
+      print *, "indexes passed to bridge", index1, index2
+
+      if (index1 < 1) &
            call mpp_error(FATAL,'invalid index in call to time_interp_external_bridge -- field was not initialized or failed to initialize')
-      if (index2 < 1.or.index2 > num_fields) &
+      if (index2 < 1) &
            call mpp_error(FATAL,'invalid index in call to time_interp_external_bridge -- field was not initialized or failed to initialize')
 
       isc1=field(index1)%isc;iec1=field(index1)%iec
@@ -811,12 +813,13 @@ module time_interp_external_bridge_mod
         endif
       endif
 
-      if ((field(index1)%have_modulo_times) .or. (field(index2)%have_modulo_times)) then
-          call mpp_error(FATAL, 'time_interp_external_bridge: field '//trim(field(index1)%name)//' array cannot have modulo time')
-      endif
-      if ((field(index1)%modulo_time) .or. (field(index2)%modulo_time)) then
-          call mpp_error(FATAL, 'time_interp_external_bridge: field '//trim(field(index1)%name)//' array cannot have modulo time')
-      endif
+      ! we can worry about this later
+      !if ((field(index1)%have_modulo_times) .or. (field(index2)%have_modulo_times)) then
+      !    call mpp_error(FATAL, 'time_interp_external_bridge: field '//trim(field(index1)%name)//' array cannot have modulo time')
+      !endif
+      !if ((field(index1)%modulo_time) .or. (field(index2)%modulo_time)) then
+      !    call mpp_error(FATAL, 'time_interp_external_bridge: field '//trim(field(index1)%name)//' array cannot have modulo time')
+      !endif
 
 
       ! no need call to time_interp to get weights?
