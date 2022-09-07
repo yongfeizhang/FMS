@@ -1148,7 +1148,7 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
         else if (multifile .and. (time>last_record)) then
            if (id_time_next<0) call mpp_error(FATAL,'data_override:next file needed with multifile')
            !next_dims = get_external_field_size(id_time_next)
-           if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, & 
+           if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, &
                'data_override: time_interp_external_bridge should only be called before first record of next file')
            call time_interp_external_bridge(id_time, id_time_next,time,data(:,:,1),verbose=.false., &
                 is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
@@ -1175,7 +1175,7 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
            if (id_time_next<0) call mpp_error(FATAL,'data_override:previous file needed')
            next_dims = get_external_field_size(id_time_next)
            if (time>data_table(index1)%time_next_records(next_dims(4))) call mpp_error(FATAL, 'data_override:time posterior to all files')
-           if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, & 
+           if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, &
                'data_override: time_interp_external_bridge should only be called before first record of next file')
            call time_interp_external_bridge(id_time, id_time_next,time,data,verbose=.false., &
                 is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
@@ -1204,7 +1204,7 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
              if (id_time_next<0) call mpp_error(FATAL,'data_override:previous file needed')
              next_dims = get_external_field_size(id_time_next)
              if (time>data_table(index1)%time_next_records(next_dims(4))) call mpp_error(FATAL, 'data_override:time posterior to all files')
-             if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, & 
+             if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, &
                  'data_override: time_interp_external_bridge should only be called before first record of next file')
              call time_interp_external_bridge(id_time, id_time_next,time,data(:,:,1),verbose=.false., &
                   horz_interp=override_array(curr_position)%horz_interp(window_id), &
@@ -1237,7 +1237,7 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
               if (id_time_next<0) call mpp_error(FATAL,'data_override:previous file needed')
               next_dims = get_external_field_size(id_time_next)
               if (time>data_table(index1)%time_next_records(next_dims(4))) call mpp_error(FATAL, 'data_override:time posterior to all files')
-              if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, & 
+              if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, &
                   'data_override: time_interp_external_bridge should only be called before first record of next file')
               call time_interp_external_bridge(id_time, id_time_next,time,data(:,:,1),verbose=.false., &
                    horz_interp=override_array(curr_position)%horz_interp(window_id), &
@@ -1276,7 +1276,7 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
              if (id_time_next<0) call mpp_error(FATAL,'data_override:previous file needed')
              next_dims = get_external_field_size(id_time_next)
              if (time>data_table(index1)%time_next_records(next_dims(4))) call mpp_error(FATAL, 'data_override:time posterior to all files')
-             if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, & 
+             if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, &
                  'data_override: time_interp_external_bridge should only be called before first record of next file')
              call time_interp_external_bridge(id_time, id_time_next,time,data,verbose=.false., &
                   horz_interp=override_array(curr_position)%horz_interp(window_id), &
@@ -1306,7 +1306,7 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
              if (id_time_next<0) call mpp_error(FATAL,'data_override:previous file needed')
              next_dims = get_external_field_size(id_time_next)
              if (time>data_table(index1)%time_next_records(next_dims(4))) call mpp_error(FATAL, 'data_override:time posterior to all files')
-             if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, & 
+             if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, &
                  'data_override: time_interp_external_bridge should only be called before first record of next file')
              call time_interp_external_bridge(id_time, id_time_next,time,data,verbose=.false., &
                   horz_interp=override_array(curr_position)%horz_interp(window_id), &
