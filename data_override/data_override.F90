@@ -1247,7 +1247,7 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
            do i = 2, size(data,3)
              data(:,:,i) = data(:,:,1)
            enddo
-        else
+        else  ! 2d with region
            allocate(mask_out(size(data,1), size(data,2),1))
            mask_out = .false.
 
@@ -1297,7 +1297,7 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
            enddo
            deallocate(mask_out)
         endif
-     else
+     else ! 3D
         if( data_table(index1)%region_type == NO_REGION ) then
           if ((time<first_record) .or. (time>last_record)) then
              if (multifile) then   ! bridging between files
@@ -1333,7 +1333,7 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
           endif
 
           data = data*factor
-        else
+        else ! 3D with mask
            allocate(mask_out(size(data,1), size(data,2), size(data,3)) )
            mask_out = .false.
 
@@ -1348,7 +1348,7 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
                   !! bridge with previous file
                   call time_interp_external_bridge(id_time_prev, id_time,time,data,verbose=.false., &
                                                    horz_interp=override_array(curr_position)%horz_interp(window_id), &
-                                                   mask_out   =mask_out(:,:,1), &
+                                                   mask_out   =mask_out(:,:,:), &
                                                    is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
                 elseif (time>last_record) then
                   !! sanity checks
@@ -1358,7 +1358,7 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
                   !! bridge with next file
                   call time_interp_external_bridge(id_time, id_time_next,time,data,verbose=.false., &
                                                    horz_interp=override_array(curr_position)%horz_interp(window_id), &
-                                                   mask_out   =mask_out(:,:,1), &
+                                                   mask_out   =mask_out(:,:,:), &
                                                    is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
                 else
                   call mpp_error(FATAL, 'data_override: this should never happen')
@@ -1369,7 +1369,7 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
            else
               call time_interp_external(id_time,time,data,verbose=.false., &
                                         horz_interp=override_array(curr_position)%horz_interp(window_id), &
-                                        mask_out   =mask_out(:,:,1), &
+                                        mask_out   =mask_out(:,:,:), &
                                         is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
            endif
 
