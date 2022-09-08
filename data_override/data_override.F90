@@ -1138,24 +1138,54 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
 !10 do time interp to get data in compute_domain
      if(data_file_is_2D) then
 
-        if (multifile .and. (time<first_record)) then
-           if (id_time_prev<0) call mpp_error(FATAL,'data_override:previous file needed with multifile')
-           prev_dims = get_external_field_size(id_time_prev)
-           if (time<data_table(index1)%time_prev_records(prev_dims(4))) call mpp_error(FATAL, &
-               'data_override: time_interp_external_bridge should only be called after last record of previous file')
-           call time_interp_external_bridge(id_time_prev, id_time,time,data(:,:,1),verbose=.false., &
-                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
-        else if (multifile .and. (time>last_record)) then
-           if (id_time_next<0) call mpp_error(FATAL,'data_override:next file needed with multifile')
-           !next_dims = get_external_field_size(id_time_next)
-           if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, &
-               'data_override: time_interp_external_bridge should only be called before first record of next file')
-           call time_interp_external_bridge(id_time, id_time_next,time,data(:,:,1),verbose=.false., &
-                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+        if ((time<first_record) .or. (time>last_record)) then
+           if (multifile) then   ! bridging between files
+             if (time<first_record) then
+               !! sanity checks
+               if (id_time_prev<0) call mpp_error(FATAL,'data_override:previous file needed with multifile')
+               prev_dims = get_external_field_size(id_time_prev)
+               if (time<data_table(index1)%time_prev_records(prev_dims(4))) call mpp_error(FATAL, &
+                   'data_override: time_interp_external_bridge should only be called to bridge with previous file')
+               !! bridge with previous file
+               call time_interp_external_bridge(id_time_prev, id_time,time,data(:,:,1),verbose=.false., &
+                    is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+             elseif (time>last_record) then
+               !! sanity checks
+               if (id_time_next<0) call mpp_error(FATAL,'data_override:next file needed with multifile')
+               if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, &
+                   'data_override: time_interp_external_bridge should only be called to bridge with next file')
+               !! bridge with next file
+               call time_interp_external_bridge(id_time, id_time_next,time,data(:,:,1),verbose=.false., &
+                    is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+             else
+               call mpp_error(FATAL, 'data_override: this should never happen')
+             endif
+           else
+             call mpp_error(FATAL, 'data_override: current time outside bounds, maybe add previous/next files to data_table')
+           endif
         else
            call time_interp_external(id_time,time,data(:,:,1),verbose=.false., &
                 is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
         endif
+
+!        if (multifile .and. (time<first_record)) then
+!           if (id_time_prev<0) call mpp_error(FATAL,'data_override:previous file needed with multifile')
+!           prev_dims = get_external_field_size(id_time_prev)
+!           if (time<data_table(index1)%time_prev_records(prev_dims(4))) call mpp_error(FATAL, &
+!               'data_override: time_interp_external_bridge should only be called after last record of previous file')
+!           call time_interp_external_bridge(id_time_prev, id_time,time,data(:,:,1),verbose=.false., &
+!                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+!        else if (multifile .and. (time>last_record)) then
+!           if (id_time_next<0) call mpp_error(FATAL,'data_override:next file needed with multifile')
+!           !next_dims = get_external_field_size(id_time_next)
+!           if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, &
+!               'data_override: time_interp_external_bridge should only be called before first record of next file')
+!           call time_interp_external_bridge(id_time, id_time_next,time,data(:,:,1),verbose=.false., &
+!                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+!        else
+!           call time_interp_external(id_time,time,data(:,:,1),verbose=.false., &
+!                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+!        endif
 
         data(:,:,1) = data(:,:,1)*factor
         do i = 2, size(data,3)
@@ -1163,26 +1193,56 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
         enddo
      else
 
-        if (multifile .and. (time<first_record)) then
-           if (id_time_prev<0) call mpp_error(FATAL,'data_override:previous file needed')
-           if (time<data_table(index1)%time_prev_records(1)) call mpp_error(FATAL, 'data_override:time anterior to all files')
-           prev_dims = get_external_field_size(id_time_prev)
-           if (time<data_table(index1)%time_prev_records(prev_dims(4))) call mpp_error(FATAL, &
-               'data_override: time_interp_external_bridge should only be called after last record of previous file')
-           call time_interp_external_bridge(id_time_prev, id_time,time,data,verbose=.false., &
-                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
-        else if (multifile .and. (time>last_record)) then
-           if (id_time_next<0) call mpp_error(FATAL,'data_override:previous file needed')
-           next_dims = get_external_field_size(id_time_next)
-           if (time>data_table(index1)%time_next_records(next_dims(4))) call mpp_error(FATAL, 'data_override:time posterior to all files')
-           if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, &
-               'data_override: time_interp_external_bridge should only be called before first record of next file')
-           call time_interp_external_bridge(id_time, id_time_next,time,data,verbose=.false., &
-                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+        if ((time<first_record) .or. (time>last_record)) then
+           if (multifile) then   ! bridging between files
+             if (time<first_record) then
+               !! sanity checks
+               if (id_time_prev<0) call mpp_error(FATAL,'data_override:previous file needed with multifile')
+               prev_dims = get_external_field_size(id_time_prev)
+               if (time<data_table(index1)%time_prev_records(prev_dims(4))) call mpp_error(FATAL, &
+                   'data_override: time_interp_external_bridge should only be called to bridge with previous file')
+               !! bridge with previous file
+               call time_interp_external_bridge(id_time_prev, id_time,time,data,verbose=.false., &
+                    is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+             elseif (time>last_record) then
+               !! sanity checks
+               if (id_time_next<0) call mpp_error(FATAL,'data_override:next file needed with multifile')
+               if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, &
+                   'data_override: time_interp_external_bridge should only be called to bridge with next file')
+               !! bridge with next file
+               call time_interp_external_bridge(id_time, id_time_next,time,data,verbose=.false., &
+                    is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+             else
+               call mpp_error(FATAL, 'data_override: this should never happen')
+             endif
+           else
+             call mpp_error(FATAL, 'data_override: current time outside bounds, maybe add previous/next files to data_table')
+           endif
         else
            call time_interp_external(id_time,time,data,verbose=.false., &
                 is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
         endif
+
+!        if (multifile .and. (time<first_record)) then
+!           if (id_time_prev<0) call mpp_error(FATAL,'data_override:previous file needed')
+!           if (time<data_table(index1)%time_prev_records(1)) call mpp_error(FATAL, 'data_override:time anterior to all files')
+!           prev_dims = get_external_field_size(id_time_prev)
+!           if (time<data_table(index1)%time_prev_records(prev_dims(4))) call mpp_error(FATAL, &
+!               'data_override: time_interp_external_bridge should only be called after last record of previous file')
+!           call time_interp_external_bridge(id_time_prev, id_time,time,data,verbose=.false., &
+!                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+!        else if (multifile .and. (time>last_record)) then
+!           if (id_time_next<0) call mpp_error(FATAL,'data_override:previous file needed')
+!           next_dims = get_external_field_size(id_time_next)
+!           if (time>data_table(index1)%time_next_records(next_dims(4))) call mpp_error(FATAL, 'data_override:time posterior to all files')
+!           if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, &
+!               'data_override: time_interp_external_bridge should only be called before first record of next file')
+!           call time_interp_external_bridge(id_time, id_time_next,time,data,verbose=.false., &
+!                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+!        else
+!           call time_interp_external(id_time,time,data,verbose=.false., &
+!                is_in=is_in,ie_in=ie_in,js_in=js_in,je_in=je_in,window_id=window_id)
+!        endif
 
         data = data*factor
      endif
