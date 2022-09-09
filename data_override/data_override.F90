@@ -126,6 +126,8 @@ type override_type
    character(len=3)                 :: gridname
    character(len=128)               :: fieldname
    integer                          :: t_index                 !index for time interp
+   integer                          :: pt_index                !previous index for time interp
+   integer                          :: nt_index                !next index for time interp
    type(horiz_interp_type), pointer :: horz_interp(:) =>NULL() ! index for horizontal spatial interp
    integer                          :: dims(4)                 ! dimensions(x,y,z,t) of the field in filename
    integer                          :: comp_domain(4)          ! istart,iend,jstart,jend for compute domain
@@ -426,7 +428,7 @@ subroutine data_override_init(Atm_domain_in, Ocean_domain_in, Ice_domain_in, Lan
           data_entry%region_type = NO_REGION
        endif
        data_table(ntable) = data_entry
-       print *, 'prev_file/next_file=',data_entry%prev_file_name,'/',data_entry%next_file_name
+       !print *, 'prev_file/next_file=',data_entry%prev_file_name,'/',data_entry%next_file_name
 
     enddo
     call mpp_error(FATAL,'too many enries in data_table')
@@ -916,6 +918,8 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
         override_array(curr_position)%dims = dims
         if(id_time<0) call mpp_error(FATAL,'data_override:field not found in init_external_field 1')
         override_array(curr_position)%t_index = id_time
+        override_array(curr_position)%pt_index = id_time_prev
+        override_array(curr_position)%nt_index = id_time_next
      else !ongrid=false
         id_time = init_external_field(filename,fieldname,domain=domain, axis_centers=axis_centers,&
              axis_sizes=axis_sizes, verbose=.true.,override=.true.,use_comp_domain=use_comp_domain, &
@@ -946,6 +950,8 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
         override_array(curr_position)%dims = dims
         if(id_time<0) call mpp_error(FATAL,'data_override:field not found in init_external_field 2')
         override_array(curr_position)%t_index = id_time
+        override_array(curr_position)%pt_index = id_time_prev
+        override_array(curr_position)%nt_index = id_time_next
 
         !  get lon and lat of the input (source) grid, assuming that axis%data contains
         !  lat and lon of the input grid (in degrees)
@@ -1054,6 +1060,8 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
      endif
 !9 Get id_time  previously stored in override_array
      id_time = override_array(curr_position)%t_index
+     id_time_prev = override_array(curr_position)%pt_index
+     id_time_next = override_array(curr_position)%nt_index
   endif
 !$OMP END CRITICAL
 
@@ -1133,6 +1141,9 @@ subroutine data_override_3d(gridname,fieldname_code,data,time,override,data_inde
 
   first_record = data_table(index1)%time_records(1)
   last_record = data_table(index1)%time_records(dims(4))
+
+  !print *,  "data_override", index1, data_table(index1)%fieldname_code
+  !print *, "data_override", id_time_prev, id_time, id_time_next
 
   if(ongrid) then
 !10 do time interp to get data in compute_domain
@@ -1419,13 +1430,21 @@ subroutine data_override_0d(gridname,fieldname_code,data,time,override,data_inde
   real,             intent(out) :: data !data returned by this call
   integer, intent(in), optional :: data_index
 
+  type(time_type)    :: first_record, last_record
   character(len=512) :: filename !file containing source data
+  character(len=512) :: prevfilename !file containing source data
+  character(len=512) :: nextfilename !file containing source data
+
   character(len=128) :: fieldname ! fieldname used in the data file
   integer :: index1 ! field index in data_table
+  integer            :: dims(4), prev_dims(4), next_dims(4)
   integer :: id_time !index for time interp in override array
+  integer            :: id_time_prev=-1 !index for time interp in override array
+  integer            :: id_time_next=-1 !index for time interp in override array
   integer :: curr_position ! position of the field currently processed in override_array
   integer :: i
   real :: factor
+  logical :: multifile
 
   if(.not.module_is_initialized) &
        call mpp_error(FATAL,'Error: need to call data_override_init first')
@@ -1451,6 +1470,7 @@ subroutine data_override_0d(gridname,fieldname_code,data,time,override,data_inde
 
   fieldname = data_table(index1)%fieldname_file ! fieldname in netCDF data file
   factor = data_table(index1)%factor
+  multifile = data_table(index1)%multifile
 
   if(fieldname == "") then
      data = factor
@@ -1459,6 +1479,8 @@ subroutine data_override_0d(gridname,fieldname_code,data,time,override,data_inde
   else
      filename = data_table(index1)%file_name
      if (filename == "") call mpp_error(FATAL,'data_override: filename not given in data_table')
+     if (multifile) prevfilename = data_table(index1)%prev_file_name
+     if (multifile) nextfilename = data_table(index1)%next_file_name
   endif
 
 !3 Check if fieldname has been previously processed
@@ -1487,8 +1509,58 @@ subroutine data_override_0d(gridname,fieldname_code,data,time,override,data_inde
      id_time = override_array(curr_position)%t_index
   endif !if curr_position < 0
 
+
+  if (multifile) then 
+    id_time_prev = -1 
+    if (prevfilename /= 'none') then 
+      id_time_prev = init_external_field(prevfilename,fieldname,verbose=.false.)
+      prev_dims = get_external_field_size(id_time_prev)
+      allocate(data_table(index1)%time_prev_records(prev_dims(4)))
+      call get_time_axis(id_time_prev,data_table(index1)%time_prev_records)
+    endif
+    id_time_next = -1 
+    if (nextfilename /= 'none') then 
+      id_time_next = init_external_field(nextfilename,fieldname,verbose=.false.)
+      next_dims = get_external_field_size(id_time_next)
+      allocate(data_table(index1)%time_next_records(next_dims(4)))
+      call get_time_axis(id_time_next,data_table(index1)%time_next_records)
+    endif
+  endif
+
+
   !10 do time interp to get data in compute_domain
-  call time_interp_external(id_time, time, data, verbose=.false.)
+
+  first_record = data_table(index1)%time_records(1)
+  last_record = data_table(index1)%time_records(dims(4))
+
+  if ((time<first_record) .or. (time>last_record)) then
+     if (multifile) then   ! bridging between files
+       if (time<first_record) then
+         !! sanity checks
+         if (id_time_prev<0) call mpp_error(FATAL,'data_override:previous file needed with multifile')
+         prev_dims = get_external_field_size(id_time_prev)
+         if (time<data_table(index1)%time_prev_records(prev_dims(4))) call mpp_error(FATAL, &
+             'data_override: time_interp_external_bridge should only be called to bridge with previous file')
+         !! bridge with previous file
+         call time_interp_external_bridge(id_time_prev, id_time,time,data,verbose=.false.)
+       elseif (time>last_record) then
+         !! sanity checks
+         if (id_time_next<0) call mpp_error(FATAL,'data_override:next file needed with multifile')
+         if (time>data_table(index1)%time_next_records(1)) call mpp_error(FATAL, &
+             'data_override: time_interp_external_bridge should only be called to bridge with next file')
+         !! bridge with next file
+         call time_interp_external_bridge(id_time, id_time_next,time,data,verbose=.false.)
+       else
+         call mpp_error(FATAL, 'data_override: this should never happen')
+       endif
+     else
+       call mpp_error(FATAL, 'data_override: current time outside bounds, maybe add previous/next files to data_table')
+     endif
+  else
+     call time_interp_external(id_time,time,data,verbose=.false.)
+  endif
+
+
   data = data*factor
 !$OMP END SINGLE
 

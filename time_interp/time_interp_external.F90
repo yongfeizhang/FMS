@@ -134,7 +134,7 @@ module time_interp_external_mod
   end interface
 
   interface time_interp_external_bridge
-     !module procedure time_interp_external_bridge_0d
+     module procedure time_interp_external_bridge_0d
      module procedure time_interp_external_bridge_2d
      module procedure time_interp_external_bridge_3d
   end interface
@@ -1009,7 +1009,7 @@ module time_interp_external_mod
       if (PRESENT(verbose)) verb=verbose
       if (debug_this_module) verb = .true.
 
-      print *, "indexes passed to bridge", index1, index2
+      !print *, "indexes passed to bridge", index1, index2
 
       if (index1 < 1) &
            call mpp_error(FATAL,'invalid index in call to time_interp_external_bridge -- field was not initialized or failed to initialize')
@@ -1146,6 +1146,8 @@ module time_interp_external_mod
       integer :: i1, i2, mod_time
       integer :: yy, mm, dd, hh, min, ss
       character(len=256) :: err_msg, filename
+      type(time_type) :: time1, time2
+      integer :: dims1(4), dims2(4)
 
       real :: w1,w2
       logical :: verb
@@ -1154,37 +1156,49 @@ module time_interp_external_mod
       if (PRESENT(verbose)) verb=verbose
       if (debug_this_module) verb = .true.
 
-      if (index2 < 1.or.index2 > num_fields) &
+      if (index1 < 0) &
+           call mpp_error(FATAL,'invalid index in call to time_interp_ext -- field was not initialized or failed to initialize')
+      if (index2 < 0) &
            call mpp_error(FATAL,'invalid index in call to time_interp_ext -- field was not initialized or failed to initialize')
 
-      if (field(index2)%siz(4) == 1) then
-         ! only one record in the file => time-independent field
-         call load_record_0d(field(index2),1)
-         i1 = find_buf_index(1,field(index2)%ibuf)
-         data = field(index2)%data(1,1,1,i1)
-      else
-        if(field(index2)%have_modulo_times) then
-          call time_interp(time,field(index2)%modulo_time_beg, field(index2)%modulo_time_end, field(index2)%time(:), &
-                          w2, t1, t2, field(index2)%correct_leap_year_inconsistency, err_msg=err_msg)
-          if(err_msg .NE. '') then
-             filename = mpp_get_file_name(field(index2)%unit)
-             call mpp_error(FATAL,"time_interp_external 3:"//trim(err_msg)//&
-                    ",file="//trim(filename)//",field="//trim(field(index2)%name) )
-          endif
-        else
-          if(field(index2)%modulo_time) then
-            mod_time=1
-          else
-            mod_time=0
-          endif
-          call time_interp(time,field(index2)%time(:),w2,t1,t2,modtime=mod_time, err_msg=err_msg)
-          if(err_msg .NE. '') then
-             filename = mpp_get_file_name(field(index2)%unit)
-             call mpp_error(FATAL,"time_interp_external 4:"//trim(err_msg)// &
-                    ",file="//trim(filename)//",field="//trim(field(index2)%name) )
-          endif
-        endif
-         w1 = 1.0-w2
+      !if (field(index2)%siz(4) == 1) then
+      !   ! only one record in the file => time-independent field
+      !   call load_record_0d(field(index2),1)
+      !   i1 = find_buf_index(1,field(index2)%ibuf)
+      !   data = field(index2)%data(1,1,1,i1)
+      !else
+        !if(field(index2)%have_modulo_times) then
+        !  call time_interp(time,field(index2)%modulo_time_beg, field(index2)%modulo_time_end, field(index2)%time(:), &
+        !                  w2, t1, t2, field(index2)%correct_leap_year_inconsistency, err_msg=err_msg)
+        !  if(err_msg .NE. '') then
+        !     filename = mpp_get_file_name(field(index2)%unit)
+        !     call mpp_error(FATAL,"time_interp_external 3:"//trim(err_msg)//&
+        !            ",file="//trim(filename)//",field="//trim(field(index2)%name) )
+        !  endif
+        !else
+        !  if(field(index2)%modulo_time) then
+        !    mod_time=1
+        !  else
+        !    mod_time=0
+        !  endif
+        !  call time_interp(time,field(index2)%time(:),w2,t1,t2,modtime=mod_time, err_msg=err_msg)
+        !  if(err_msg .NE. '') then
+        !     filename = mpp_get_file_name(field(index2)%unit)
+        !     call mpp_error(FATAL,"time_interp_external 4:"//trim(err_msg)// &
+        !            ",file="//trim(filename)//",field="//trim(field(index2)%name) )
+        !  endif
+        !endif
+      dims1 = get_external_field_size(index1)
+      dims2 = get_external_field_size(index2)
+
+      t1 = dims1(4)
+      t2 = 1
+
+      time1 = field(index1)%time(t1)
+      time2 = field(index2)%time(t2)
+      w2= (time - time1) // (time2 - time1)
+      w1 = 1.0-w2
+
          if (verb) then
             call get_date(time,yy,mm,dd,hh,min,ss)
             write(outunit,'(a,i4,a,i2,a,i2,1x,i2,a,i2,a,i2)') &
@@ -1203,16 +1217,9 @@ module time_interp_external_mod
             write(outunit,*) 'ibuf= ',field(index2)%ibuf
             write(outunit,*) 'i1,i2= ',i1, i2
          endif
-      endif
+      !endif
 
     end subroutine time_interp_external_bridge_0d
-
-
-
-
-
-
-
 
 
     subroutine set_time_modulo(Time)
