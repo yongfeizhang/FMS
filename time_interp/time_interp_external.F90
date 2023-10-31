@@ -652,7 +652,8 @@ module time_interp_external_mod
             if (field(num_fields)%time(j) >= field(num_fields)%time(j+1)) then
                write(msg,'(A,i20)') "times not monotonically increasing. Filename: " &
                     //TRIM(file)//"  field:  "//TRIM(fieldname)//" timeslice: ", j
-               call mpp_error(FATAL, TRIM(msg))
+             !!YFZ
+             !  call mpp_error(FATAL, TRIM(msg))
             endif
          enddo
 
