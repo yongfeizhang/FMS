@@ -167,6 +167,11 @@ type(time_type) :: base_time, base_time_plus_one_yr
 real :: dt
 logical :: permit_conversion_local
 
+!!!YFZ set the skip_leap_day to true for now
+logical :: skip_leap_day
+skip_leap_day = .true.
+!!!END!!!  
+
 if(.not.module_is_initialized) then
   read (input_nml_file, get_cal_time_nml, iostat=io)
   ierr = check_nml_error (io, 'get_cal_time_nml')
@@ -329,6 +334,14 @@ if (calendar_in_i /= calendar_tm_i) then
     get_cal_time = set_date(year,month,day,hour,minute,second) + set_time(increment_seconds, increment_days)
     call get_date(get_cal_time,year,month,day,hour,minute,second)
     call set_calendar_type(calendar_tm_i)
+
+    !!YFZ to skip the leap day if calendar_tm_in is noleap but calendar_in_i is julian or gregorian)
+    if (calendar_tm_i.eq.NOLEAP .and. month.eq.2 .and. day.eq. 29 .and. skip_leap_day) then
+        month = 3
+        day = 1
+    endif
+    !!!END!!!
+
     get_cal_time = set_date(year,month,day,hour,minute,second, err_msg=err_msg)
     if(err_msg /= '') then
       call error_mesg('get_cal_time','Error in function get_cal_time: '//trim(err_msg)// &
