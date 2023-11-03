@@ -37,6 +37,7 @@ private
 
 
 !Module constants.
+integer, parameter, public :: default_deflate_level = 0 !< The default (no compression) deflate level to use
 integer, parameter :: variable_missing = -1
 integer, parameter :: dimension_missing = -1
 integer, parameter, public :: no_unlimited_dimension = -1 !> No unlimited dimension in file.
@@ -54,6 +55,10 @@ integer, private :: fms2_ncchksz = -1 !< Chunksize (bytes) used in nc_open and n
 integer, private :: fms2_nc_format_param = -1 !< Netcdf format type param used in nc_create
 character (len = 10), private :: fms2_nc_format !< Netcdf format type used in netcdf_file_open
 integer, private :: fms2_header_buffer_val = -1  !< value used in NF__ENDDEF
+integer, private :: fms2_deflate_level = default_deflate_level !< Netcdf deflate level to use in
+                                                               !! nf90_def_var (integer between 1 to 9)
+logical, private :: fms2_shuffle = .false. !< Flag indicating whether to use the netcdf shuffle filter
+logical, private :: fms2_is_netcdf4 = .false. !< Flag indicating whether the default netcdf file format is netcdf4
 
 !> @}
 
@@ -125,7 +130,7 @@ type, public :: FmsNetcdfFile_t
   logical :: is_readonly !< Flag telling if the file is readonly.
   integer :: ncid !< Netcdf file id.
   character(len=256) :: nc_format !< Netcdf file format.
-  logical :: allow_int8 !< Flag indicating if int8 variables are allowed
+  logical :: is_netcdf4 !< Flag indicating if the netcdf file type is netcdf4
   integer, dimension(:), allocatable :: pelist !< List of ranks who will
                                                !! communicate.
   integer :: io_root !< I/O root rank of the pelist.
@@ -212,6 +217,7 @@ public :: compressed_read_3d
 public :: compressed_read_4d
 public :: compressed_read_5d
 public :: register_compressed_dimension
+public :: register_unlimited_compressed_axis
 public :: netcdf_add_restart_variable_0d_wrap
 public :: netcdf_add_restart_variable_1d_wrap
 public :: netcdf_add_restart_variable_2d_wrap
@@ -331,12 +337,18 @@ end interface is_valid
 contains
 
 !> @brief Accepts the namelist fms2_io_nml variables relevant to netcdf_io_mod
-subroutine netcdf_io_init (chksz, header_buffer_val, netcdf_default_format)
-integer, intent(in) :: chksz
-character (len = 10), intent(in) :: netcdf_default_format
-integer, intent(in) :: header_buffer_val
+subroutine netcdf_io_init (chksz, header_buffer_val, netcdf_default_format, deflate_level, shuffle)
+integer,              intent(in) :: chksz                 !< Chunksize (bytes) used in nc_open and nc_create
+character (len = 10), intent(in) :: netcdf_default_format !< Netcdf format type param used in nc_create
+integer,              intent(in) :: header_buffer_val     !< Value used in NF__ENDDEF
+integer,              intent(in) :: deflate_level         !< Netcdf deflate level to use in nf90_def_var
+                                                          !! (integer between 1 to 9)
+logical,              intent(in) :: shuffle               !< Flag indicating whether to use the netcdf shuffle filter
 
  fms2_ncchksz = chksz
+ fms2_deflate_level = deflate_level
+ fms2_shuffle = shuffle
+ fms2_is_netcdf4 = .false.
  fms2_header_buffer_val = header_buffer_val
  if (string_compare(netcdf_default_format, "64bit", .true.)) then
      fms2_nc_format_param = nf90_64bit_offset
@@ -346,6 +358,7 @@ integer, intent(in) :: header_buffer_val
      call string_copy(fms2_nc_format, "classic")
  elseif (string_compare(netcdf_default_format, "netcdf4", .true.)) then
      fms2_nc_format_param = nf90_netcdf4
+     fms2_is_netcdf4 = .true.
      call string_copy(fms2_nc_format, "netcdf4")
  else
      call error("unrecognized netcdf file format "//trim(netcdf_default_format)// &
@@ -605,7 +618,7 @@ function netcdf_file_open(fileobj, path, mode, nc_format, pelist, is_restart, do
   fileobj%io_root = fileobj%pelist(1)
   fileobj%is_root = mpp_pe() .eq. fileobj%io_root
 
-  fileobj%allow_int8 = .false.
+  fileobj%is_netcdf4 = .false.
   !Open the file with netcdf if this rank is the I/O root.
   if (fileobj%is_root) then
     if (fms2_ncchksz == -1) call error("netcdf_file_open:: fms2_ncchksz not set, call fms2_io_init")
@@ -617,7 +630,7 @@ function netcdf_file_open(fileobj, path, mode, nc_format, pelist, is_restart, do
       elseif (string_compare(nc_format, "classic", .true.)) then
         nc_format_param = nf90_classic_model
       elseif (string_compare(nc_format, "netcdf4", .true.)) then
-        fileobj%allow_int8 = .true.
+        fileobj%is_netcdf4 = .true.
         nc_format_param = nf90_netcdf4
       else
         call error("unrecognized netcdf file format: '"//trim(nc_format)//"' for file:"//trim(fileobj%path)//&
@@ -627,6 +640,7 @@ function netcdf_file_open(fileobj, path, mode, nc_format, pelist, is_restart, do
     else
       call string_copy(fileobj%nc_format, trim(fms2_nc_format))
       nc_format_param = fms2_nc_format_param
+      fileobj%is_netcdf4 = fms2_is_netcdf4
     endif
 
     if (string_compare(mode, "read", .true.)) then
@@ -767,6 +781,47 @@ subroutine append_compressed_dimension(fileobj, dim_name, npes_corner, &
   fileobj%compressed_dims(n)%nelems = sum(fileobj%compressed_dims(n)%npes_nelems)
 end subroutine append_compressed_dimension
 
+!> @brief Add a "compressed" unlimited dimension to a netcdf file.
+!! @note Here compressed means that every rank has a different dimension_length
+!! compressed. This was written specifically for the icebergs restarts.
+subroutine register_unlimited_compressed_axis(fileobj, dimension_name, dimension_length)
+  class(FmsNetcdfFile_t), intent(inout) :: fileobj           !< File object.
+  character(len=*),       intent(in)    :: dimension_name    !< Dimension name.
+  integer,                intent(in)    :: dimension_length  !< Dimension length for the current rank
+
+  integer, dimension(:), allocatable :: npes_start !< The starting index of the dimension for each of the PEs
+  integer, dimension(:), allocatable :: npes_count !< The size of the dimension for each of the PEs
+  integer                            :: i          !< For do loops
+  integer                            :: err        !< Netcdf error
+  integer                            :: dimid      !< Netcdf id for the dimension
+
+  !Gather all local dimension lengths on the I/O root pe.
+  allocate(npes_start(size(fileobj%pelist)))
+  allocate(npes_count(size(fileobj%pelist)))
+  do i = 1, size(fileobj%pelist)
+    if (fileobj%pelist(i) .eq. mpp_pe()) then
+      npes_count(i) = dimension_length
+    else
+      call mpp_recv(npes_count(i), fileobj%pelist(i), block=.false.)
+      call mpp_send(dimension_length, fileobj%pelist(i))
+    endif
+  enddo
+  call mpp_sync_self(check=event_recv)
+  call mpp_sync_self(check=event_send)
+  npes_start(1) = 1
+  do i = 1, size(fileobj%pelist)-1
+     npes_start(i+1) = npes_start(i) + npes_count(i)
+  enddo
+  call append_compressed_dimension(fileobj, dimension_name, npes_start, &
+                                   npes_count)
+
+  if (fileobj%is_root .and. .not. fileobj%is_readonly) then
+    call set_netcdf_mode(fileobj%ncid, define_mode)
+    err = nf90_def_dim(fileobj%ncid, trim(dimension_name), unlimited, dimid)
+    call check_netcdf_code(err, "Netcdf_add_dimension: file:"//trim(fileobj%path)//" dimension name:"// &
+                         & trim(dimension_name))
+  endif
+end subroutine register_unlimited_compressed_axis
 
 !> @brief Add a dimension to a file.
 subroutine netcdf_add_dimension(fileobj, dimension_name, dimension_length, &
@@ -851,7 +906,7 @@ end subroutine register_compressed_dimension
 
 
 !> @brief Add a variable to a file.
-subroutine netcdf_add_variable(fileobj, variable_name, variable_type, dimensions)
+subroutine netcdf_add_variable(fileobj, variable_name, variable_type, dimensions, chunksizes)
 
   class(FmsNetcdfFile_t), intent(in) :: fileobj !< File object.
   character(len=*), intent(in) :: variable_name !< Variable name.
@@ -859,7 +914,9 @@ subroutine netcdf_add_variable(fileobj, variable_name, variable_type, dimensions
                                                 !! values are: "char", "int", "int64",
                                                 !! "float", or "double".
   character(len=*), dimension(:), intent(in), optional :: dimensions !< Dimension names.
-
+  integer, optional, intent(in) :: chunksizes(:) !< netcdf chunksize to use for this variable
+                                                 !! This feature is only
+                                                 !! available for netcdf4 files
   integer :: err
   integer, dimension(:), allocatable :: dimids
   integer :: vtype
@@ -874,7 +931,7 @@ subroutine netcdf_add_variable(fileobj, variable_name, variable_type, dimensions
     if (string_compare(variable_type, "int", .true.)) then
       vtype = nf90_int
     elseif (string_compare(variable_type, "int64", .true.)) then
-      if ( .not. fileobj%allow_int8) call error(trim(fileobj%path)//&
+      if ( .not. fileobj%is_netcdf4) call error(trim(fileobj%path)//&
                                                &": 64 bit integers are only supported with 'netcdf4' file format"//&
                                                &". Set netcdf_default_format='netcdf4' in the fms2_io namelist OR "//&
                                                &"add nc_format='netcdf4' to your open_file call")
@@ -896,7 +953,15 @@ subroutine netcdf_add_variable(fileobj, variable_name, variable_type, dimensions
       do i = 1, size(dimids)
         dimids(i) = get_dimension_id(fileobj%ncid, trim(dimensions(i)),msg=append_error_msg)
       enddo
-      err = nf90_def_var(fileobj%ncid, trim(variable_name), vtype, dimids, varid)
+      if (fileobj%is_netcdf4) then
+        err = nf90_def_var(fileobj%ncid, trim(variable_name), vtype, dimids, varid, &
+          &deflate_level=fms2_deflate_level, shuffle=fms2_shuffle, chunksizes=chunksizes)
+      else
+        if (fms2_deflate_level .ne. default_deflate_level .or. fms2_shuffle .or. present(chunksizes)) &
+          &call mpp_error(NOTE,"Not able to use deflate_level or chunksizes if not using netcdf4"// &
+          & " ignoring them")
+        err = nf90_def_var(fileobj%ncid, trim(variable_name), vtype, dimids, varid)
+      endif
       deallocate(dimids)
     else
       err = nf90_def_var(fileobj%ncid, trim(variable_name), vtype, varid)
@@ -1933,6 +1998,7 @@ include "compressed_write.inc"
 include "compressed_read.inc"
 include "scatter_data_bc.inc"
 include "gather_data_bc.inc"
+include "unpack_data.inc"
 
 !> @brief Wrapper to distinguish interfaces.
 function netcdf_file_open_wrap(fileobj, path, mode, nc_format, pelist, is_restart, dont_add_res_to_filename) &
@@ -2238,11 +2304,13 @@ subroutine write_restart_bc(fileobj, unlim_dim_level)
     if (associated(fileobj%restart_vars(i)%data2d)) then
         call gather_data_bc(fileobj, fileobj%restart_vars(i)%data2d, fileobj%restart_vars(i)%bc_info)
         call register_variable_attribute(fileobj, fileobj%restart_vars(i)%varname, "checksum", &
-             fileobj%restart_vars(i)%bc_info%chksum, str_len=len(fileobj%restart_vars(i)%bc_info%chksum))
+             fileobj%restart_vars(i)%bc_info%chksum(1:len(fileobj%restart_vars(i)%bc_info%chksum)),&
+             str_len=len(fileobj%restart_vars(i)%bc_info%chksum))
     else if (associated(fileobj%restart_vars(i)%data3d)) then
         call gather_data_bc(fileobj, fileobj%restart_vars(i)%data3d, fileobj%restart_vars(i)%bc_info)
         call register_variable_attribute(fileobj, fileobj%restart_vars(i)%varname, "checksum", &
-             fileobj%restart_vars(i)%bc_info%chksum, str_len=len(fileobj%restart_vars(i)%bc_info%chksum))
+             fileobj%restart_vars(i)%bc_info%chksum(1:len(fileobj%restart_vars(i)%bc_info%chksum)),&
+             str_len=len(fileobj%restart_vars(i)%bc_info%chksum))
     endif
  enddo
 
